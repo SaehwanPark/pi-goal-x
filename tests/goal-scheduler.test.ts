@@ -150,23 +150,108 @@ test("early wake and check timer race produce one claimed run", async t => {
 	assert.equal(h.core.state.goal?.scheduler?.wait?.remainingChecks, 2);
 });
 
-test("checks retain identity, deadline and finite count across redeclaration", async t => {
+test("checks retain identity, deadline and can replenish up to deadline across redeclaration", async t => {
 	const h = await fixture(t, 5);
 	t.mock.timers.enable({ apis: ["setTimeout", "Date"] });
 	h.begin(); h.wait();
 	const first = structuredClone(h.core.state.goal!.scheduler!.wait!);
 	h.core.scheduler.settled(h.ctx); t.mock.timers.tick(999); assert.equal(h.sent.length, 0); t.mock.timers.tick(2);
 	assert.equal(h.sent.length, 1); h.admit();
-	assert.equal(h.wait().terminate, false, "new wait cannot reset an existing check");
+	assert.equal(h.wait().terminate, false, "new wait cannot reset an existing check without wait_id");
 	const redeclare = () => h.core.scheduler.declare(h.ctx, { kind: "wait", wait_id: first.id, reason: first.reason, deadline: new Date(first.deadline).toISOString() });
 	assert.equal(redeclare().terminate, true);
 	assert.equal(h.core.state.goal?.scheduler?.wait?.remainingChecks, 1);
 	h.core.scheduler.settled(h.ctx); t.mock.timers.tick(1001); h.admit();
 	assert.equal(redeclare().terminate, true);
+	// After check 2, redeclare replenishes checks for the remaining deadline window (8 seconds remaining / 1s = 8)
+	assert.ok((h.core.state.goal?.scheduler?.wait?.remainingChecks ?? 0) >= 1);
 	h.core.scheduler.settled(h.ctx);
+	assert.equal(h.core.state.goal?.status, "active", "goal stays active rather than pausing early");
+	// Ticking to the deadline expires the wait cleanly
+	t.mock.timers.tick(9000);
 	assert.equal(h.core.state.goal?.status, "paused");
-	assert.match(h.core.state.goal?.pauseReason ?? "", /check allowance exhausted/);
+	assert.match(h.core.state.goal?.pauseReason ?? "", /deadline/);
+});
+
+test("wait without max_checks auto-derives allowance and exhausted checks sleep to deadline", async t => {
+	const h = await fixture(t, 5);
+	t.mock.timers.enable({ apis: ["setTimeout", "Date"] });
+	h.begin();
+	const res = h.core.scheduler.declare(h.ctx, {
+		kind: "wait",
+		reason: "Await external build",
+		deadline: new Date(Date.now() + 5000).toISOString(),
+		polling: { interval_seconds: 2 },
+	});
+	assert.equal(res.terminate, true);
+	assert.equal(h.core.state.goal?.scheduler?.wait?.remainingChecks, 2); // 5000 / 2000 = 2
+	h.core.scheduler.settled(h.ctx);
+
+	// First check at 2s
+	t.mock.timers.tick(2000);
+	assert.equal(h.sent.length, 1);
+	h.admit();
+	assert.equal(h.core.state.goal?.scheduler?.wait?.remainingChecks, 1);
+	const waitId = h.core.state.goal!.scheduler!.wait!.id;
+	const deadlineIso = new Date(h.core.state.goal!.scheduler!.wait!.deadline).toISOString();
+	h.core.scheduler.declare(h.ctx, {
+		kind: "wait",
+		wait_id: waitId,
+		reason: "Await external build",
+		deadline: deadlineIso,
+	});
+	h.core.scheduler.settled(h.ctx);
+
+	// Second check at 4s (remainingChecks decrements to 0 in claim)
+	t.mock.timers.tick(2000);
 	assert.equal(h.sent.length, 2);
+	h.admit();
+	assert.equal(h.core.state.goal?.scheduler?.wait?.remainingChecks, 0);
+
+	// Redeclare to continue waiting until deadline
+	h.core.scheduler.declare(h.ctx, {
+		kind: "wait",
+		wait_id: waitId,
+		reason: "Await external build",
+		deadline: deadlineIso,
+	});
+	h.core.scheduler.settled(h.ctx);
+	assert.equal(h.core.state.goal?.status, "active", "keeps waiting rather than hard-pausing on check exhaustion");
+	t.mock.timers.tick(999);
+	assert.equal(h.core.state.goal?.status, "active");
+	t.mock.timers.tick(2); // reaches 5000ms deadline
+	assert.equal(h.core.state.goal?.status, "paused");
+	assert.match(h.core.state.goal?.pauseReason ?? "", /deadline/);
+});
+
+test("redeclaration allows updating polling interval and check allowance", async t => {
+	const h = await fixture(t, 5);
+	t.mock.timers.enable({ apis: ["setTimeout", "Date"] });
+	h.begin();
+	const firstDeadline = new Date(Date.now() + 10000).toISOString();
+	h.core.scheduler.declare(h.ctx, {
+		kind: "wait",
+		reason: "Initial wait",
+		deadline: firstDeadline,
+		polling: { interval_seconds: 1, max_checks: 1 },
+	});
+	const waitId = h.core.state.goal!.scheduler!.wait!.id;
+	h.core.scheduler.settled(h.ctx);
+	t.mock.timers.tick(1000);
+	h.admit();
+	assert.equal(h.core.state.goal?.scheduler?.wait?.remainingChecks, 0);
+
+	// Redeclare with new polling interval and explicit checks
+	const updated = h.core.scheduler.declare(h.ctx, {
+		kind: "wait",
+		wait_id: waitId,
+		reason: "Extended polling",
+		deadline: firstDeadline,
+		polling: { interval_seconds: 2, max_checks: 3 },
+	});
+	assert.equal(updated.terminate, true);
+	assert.equal(h.core.state.goal?.scheduler?.wait?.intervalMs, 2000);
+	assert.equal(h.core.state.goal?.scheduler?.wait?.remainingChecks, 3);
 });
 
 test("waiting restores with no catch-up; claimed dispatch never replays", async t => {

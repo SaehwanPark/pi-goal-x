@@ -509,14 +509,14 @@ async function runGoalAgentPauseFlow(ctx: ExtensionContext, reason: string | und
 pi.registerTool(defineTool({
 	name: "update_goal",
 	label: "Update Goal",
-	description: "End execution with status OR continuation. Wait: future ISO deadline; reuse wait_id/deadline without polling on recheck. Completion is audited.",
+	description: "End execution with status OR continuation. Wait: future ISO deadline; reuse wait_id/deadline on recheck. Optional polling checks automatically derive from deadline if max_checks omitted. Completion is audited.",
 	promptSnippet: "Declare the next execution disposition or complete, block, or pause.",
 	promptGuidelines: [],
 	parameters: Type.Object({
 		status: Type.Optional(StringEnum(["complete", "blocked", "paused"] as const, { description: "Exclusive with continuation." })),
 		continuation: Type.Optional(Type.Union([
 			Type.Object({ kind: Type.Literal("ready"), next_action: Type.String({ minLength: 1, maxLength: 2000 }) }, { additionalProperties: false }),
-			Type.Object({ kind: Type.Literal("wait"), reason: Type.String({ minLength: 1, maxLength: 2000 }), deadline: Type.String(), wait_id: Type.Optional(Type.String()), polling: Type.Optional(Type.Object({ interval_seconds: Type.Integer({ minimum: 1, maximum: 2147483 }), max_checks: Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER }) }, { additionalProperties: false })) }, { additionalProperties: false }),
+			Type.Object({ kind: Type.Literal("wait"), reason: Type.String({ minLength: 1, maxLength: 2000 }), deadline: Type.String(), wait_id: Type.Optional(Type.String()), polling: Type.Optional(Type.Object({ interval_seconds: Type.Integer({ minimum: 1, maximum: 2147483 }), max_checks: Type.Optional(Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER })) }, { additionalProperties: false })) }, { additionalProperties: false }),
 		])),
 		reason: Type.Optional(Type.String({ description: "Required when status is paused or blocked: describe the concrete blocker." })),
 		attempted_actions: Type.Optional(Type.Array(Type.String({ maxLength: 240 }), { maxItems: 8, description: "Actions attempted against the blocker." })),
