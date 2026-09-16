@@ -4,6 +4,8 @@ All notable changes to pi-goal-x are documented here.
 
 ## [Unreleased]
 
+## [0.31.5] — 2026-09-16
+
 ### Changed
 
 - Restore implicit continuation by default (#63), including reasoning-only executions and final-task wrap-up, with no tool/progress gate or cooldown. Execution contracts are now opt-in through `strictExecutionContract: true`; default mode accepts optional ready decisions but rejects new waits. Existing waits retain their bounds and repair behavior. Run/token limits and durable dispatch safeguards remain unchanged.
