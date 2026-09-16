@@ -231,6 +231,7 @@ describe("scoped mutation", () => {
 			const target = scopeTarget(dir, "global");
 			writeJson(target, { provider: "keep" });
 			invalidateGoalSettingsCache();
+			if (process.platform === "win32") return;
 			// Make the directory read-only AFTER the original file exists so the
 			// temp-file creation fails; the original must remain intact.
 			fs.chmodSync(dir, 0o555);

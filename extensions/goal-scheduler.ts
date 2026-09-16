@@ -152,16 +152,28 @@ export class GoalScheduler {
 					const deadline = Date.parse(input.deadline);
 					if (!/T.*(?:Z|[+-]\d\d:\d\d)$/.test(input.deadline) || !Number.isSafeInteger(deadline) || deadline <= Date.now()) throw new Error("wait requires a future ISO deadline with a timezone.");
 					if (s.wait) {
-						if (input.wait_id !== s.wait.id || deadline !== s.wait.deadline) throw new Error("Re-declare the current wait_id with its original deadline; checks cannot be reset.");
-						if (input.polling && (input.polling.interval_seconds * 1000 !== s.wait.intervalMs || input.polling.max_checks !== s.wait.remainingChecks)) throw new Error("Existing wait polling cannot be reset; omit polling when re-declaring wait_id.");
+						if (input.wait_id !== s.wait.id || deadline !== s.wait.deadline) throw new Error("Re-declare the current wait_id with its original deadline.");
+						if (input.polling) {
+							const polling = input.polling;
+							if (!Number.isSafeInteger(polling.interval_seconds) || polling.interval_seconds < 1 || polling.interval_seconds > 2_147_483 || (polling.max_checks !== undefined && (!Number.isSafeInteger(polling.max_checks) || polling.max_checks < 1))) throw new Error("Polling requires positive whole interval_seconds (at most 2147483) and max_checks.");
+							s.wait.intervalMs = polling.interval_seconds * 1000;
+							s.wait.remainingChecks = polling.max_checks ?? Math.max(1, Math.floor((s.wait.deadline - Date.now()) / s.wait.intervalMs));
+							s.wait.nextCheckAt = Date.now() + s.wait.intervalMs;
+						} else if (s.wait.intervalMs) {
+							if (s.wait.remainingChecks === undefined || s.wait.remainingChecks <= 0) {
+								s.wait.remainingChecks = Math.max(1, Math.floor((s.wait.deadline - Date.now()) / s.wait.intervalMs));
+							}
+							s.wait.nextCheckAt = Date.now() + s.wait.intervalMs;
+						}
 						s.wait.token = randomUUID(); s.wait.signalled = false;
-						if (s.wait.intervalMs) s.wait.nextCheckAt = Date.now() + s.wait.intervalMs;
 					} else {
 						if (input.wait_id) throw new Error("Unknown wait_id.");
 						const polling = input.polling;
-						if (polling && (!Number.isSafeInteger(polling.interval_seconds) || polling.interval_seconds < 1 || polling.interval_seconds > 2_147_483 || !Number.isSafeInteger(polling.max_checks) || polling.max_checks < 1)) throw new Error("Polling requires positive whole interval_seconds (at most 2147483) and max_checks.");
+						if (polling && (!Number.isSafeInteger(polling.interval_seconds) || polling.interval_seconds < 1 || polling.interval_seconds > 2_147_483 || (polling.max_checks !== undefined && (!Number.isSafeInteger(polling.max_checks) || polling.max_checks < 1)))) throw new Error("Polling requires positive whole interval_seconds (at most 2147483) and max_checks.");
+						const intervalMs = polling ? polling.interval_seconds * 1000 : undefined;
+						const remainingChecks = polling ? (polling.max_checks ?? Math.max(1, Math.floor((deadline - Date.now()) / intervalMs!))) : undefined;
 						s.wait = { id: randomUUID(), token: randomUUID(), reason: input.reason.trim(), deadline,
-							...(polling ? { intervalMs: polling.interval_seconds * 1000, remainingChecks: polling.max_checks, nextCheckAt: Date.now() + polling.interval_seconds * 1000 } : {}) };
+							...(polling ? { intervalMs, remainingChecks, nextCheckAt: Date.now() + intervalMs! } : {}) };
 					}
 					s.phase = "waiting"; s.decision = { kind: "wait" };
 				} else throw new Error("Unknown continuation kind.");
@@ -276,7 +288,9 @@ export class GoalScheduler {
 			if (s.wait && Date.now() >= s.wait.deadline) { this.pause(ctx, "Wait deadline reached."); return; }
 			if (s.phase === "waiting" && s.wait) {
 				this.core.clearActiveAccounting();
-				if (!s.wait.signalled && s.wait.remainingChecks === 0) { this.pause(ctx, "Wait check allowance exhausted."); return; }
+				if (!s.wait.signalled && s.wait.remainingChecks !== undefined && s.wait.remainingChecks <= 0) {
+					s.wait.nextCheckAt = undefined;
+				}
 				if (!s.wait.signalled && (s.wait.nextCheckAt === undefined || s.wait.nextCheckAt > Date.now())) {
 					const due = Math.min(s.wait.deadline, s.wait.nextCheckAt ?? Infinity);
 					this.later(ctx, due - Date.now(), () => this.schedule(ctx)); return;
