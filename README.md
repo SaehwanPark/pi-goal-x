@@ -2,25 +2,52 @@
   <img src="pi-goal-x.png" alt="pi-goal-x logo" width="560">
 </div>
 
-<div align="center">
-  <a href="https://pi.dev/packages?type=extension" target="_blank" rel="noopener noreferrer">
-    <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="assets/badge-dark.svg">
-      <img src="assets/badge-light.svg" alt="TOP 0.3% of Pi coding agent extensions: #7 of 3,200 by downloads · Sep 14, 2026 (best recorded rank)" width="480">
-    </picture>
-  </a>
-</div>
-
 # pi-goal-x
+
+> [!NOTE]
+> **Fork Notice**: This repository is a fork of [`tmonk/pi-goal-x`](https://github.com/tmonk/pi-goal-x).
+> Because this fork is maintained independently and not published to npm, installation via `npm:pi-goal-x` is **not valid**. Please install directly via Git or local source as shown below.
 
 Adds `/goal` functionality to [pi](https://github.com/earendil-works/pi-coding-agent). The agent helps you define a goal and plan, continues working on it automatically, and submits the result to an optional independent completion auditor.
 
 The extension saves goal objectives, tasks, and progress across sessions. You can pause, resume, revise, or switch goals as your work changes.
 
+### Fork Enhancements
+
+- **Wait check allowance replenishment**: Re-declaring a wait replenishes polling check allowances up to the remaining deadline, preventing premature exhaustion during extended multi-stage waits.
+- **Auto-derived polling checks**: `polling.max_checks` is optional and automatically calculated from the interval and deadline if omitted.
+- **Graceful wait degradation**: When polling checks run out before the deadline, the scheduler soft-degrades to waiting for the deadline or external wake signal instead of hard-pausing.
+- **Cross-platform test runner**: Full test suite and CRLF compatibility on Windows.
+
 ## Install
 
+Install this fork directly using [pi](https://github.com/earendil-works/pi-coding-agent):
+
 ```bash
-pi install npm:pi-goal-x
+# Global install (default)
+pi install git:github.com/SaehwanPark/pi-goal-x
+
+# Or project-local install (.pi/settings.json)
+pi install -l git:github.com/SaehwanPark/pi-goal-x
+```
+
+You can also install via HTTPS:
+
+```bash
+pi install https://github.com/SaehwanPark/pi-goal-x
+```
+
+Or from a local clone:
+
+```bash
+git clone https://github.com/SaehwanPark/pi-goal-x.git
+pi install ./pi-goal-x
+```
+
+To update an existing installation to the latest commit:
+
+```bash
+pi install git:github.com/SaehwanPark/pi-goal-x
 ```
 
 ## Create a goal
@@ -144,9 +171,9 @@ update_goal({ continuation: {
 } })
 ```
 
-Use a future deadline appropriate to the task. Omit `polling` for an event-only wait. Successful declarations terminate the execution segment. On a scheduled check, reuse the returned `wait_id` and original deadline, omitting `polling`; remaining checks cannot be reset. A ready decision ends the wait. Time spent waiting is not active execution time.
+Use a future deadline appropriate to the task. Omit `polling` for an event-only wait, or omit `polling.max_checks` to automatically calculate checks from the deadline. Successful declarations terminate the execution segment. On a scheduled check, reuse the returned `wait_id` and original deadline; remaining check allowances are replenished up to the remaining deadline upon re-declaration. A ready decision ends the wait. Time spent waiting is not active execution time.
 
-The dashboard, `/goal-status`, and `get_goal` show scheduling state, timing, checks, and allowance consumption. Expired waits and exhausted checks or allowance pause without another model call. Waits survive reopening the same session, without replaying missed checks; Pi must remain open for timers to execute. Another session requires explicit resume to take ownership. An ambiguous interrupted dispatch requires resume instead of automatic replay.
+The dashboard, `/goal-status`, and `get_goal` show scheduling state, timing, checks, and allowance consumption. Expired waits or exhausted run allowances pause the goal. If polling checks run out before the deadline, the scheduler gracefully soft-degrades to waiting for the deadline or an external signal rather than abruptly pausing. Waits survive reopening the same session, without replaying missed checks; Pi must remain open for timers to execute. Another session requires explicit resume to take ownership. An ambiguous interrupted dispatch requires resume instead of automatic replay.
 
 ### Background producer integration
 
